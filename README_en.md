@@ -488,3 +488,201 @@ If you find our work helpful, please cite the following papers:
   year={2025}
 }
 ```
+
+---
+
+## Automated Deployment Guide (For AI Assistants)
+
+> **This section is specifically designed for AI assistants (such as Claude Code) to automate the deployment of Open-AutoGLM.**
+>
+> If you are a human reader, you can skip this section and follow the documentation above.
+
+---
+
+### Project Overview
+
+Open-AutoGLM is a phone agent framework:
+- **Input**: User's natural language instructions (e.g., "Open WhatsApp and send a message to John")
+- **Output**: Automatically operates the user's Android phone to complete tasks
+- **Mechanism**: Screenshot → Vision model understands interface → Outputs tap coordinates → ADB executes actions → Loop
+
+The architecture consists of two parts:
+1. **Agent Code** (this repository): Runs on the user's computer, responsible for calling models, parsing actions, and controlling the phone
+2. **Vision Model Service**: Can be a remote API or deployed locally
+
+---
+
+### Pre-Deployment Checklist
+
+Before starting deployment, confirm the following items with the user:
+
+#### Hardware Requirements
+- [ ] User has an Android phone (Android 7.0+)
+- [ ] User has a USB cable that supports data transfer (not just charging)
+- [ ] Phone and computer can be connected via USB cable
+
+#### Phone Configuration
+- [ ] Phone has Developer Mode enabled (Settings → About Phone → Tap Build Number 7 times)
+- [ ] Phone has USB Debugging enabled (Settings → Developer Options → USB Debugging)
+- [ ] Some models require enabling "USB Debugging (Security Settings)" as well
+- [ ] ADB Keyboard app is installed (Download: https://github.com/senzhk/ADBKeyBoard/blob/master/ADBKeyboard.apk)
+- [ ] ADB Keyboard is enabled in system settings (Settings → Language & Input → Enable ADB Keyboard)
+
+#### Model Service Confirmation (Choose One)
+
+**Ask the user explicitly: Do you already have access to an AutoGLM model service?**
+
+- **Option A: Use an already-deployed model service (Recommended)**
+  - User provides the model service URL (e.g., `http://xxx.xxx.xxx.xxx:8000/v1`)
+  - No local GPU required, no model download needed
+  - Use this URL directly as the `--base-url` parameter
+
+- **Option B: Deploy model locally (High system requirements)**
+  - Requires NVIDIA GPU (24GB+ VRAM recommended)
+  - Requires installation of vLLM or SGLang
+  - Requires downloading approximately 20GB of model files
+  - **If the user is a beginner or unsure, strongly recommend Option A**
+
+---
+
+### Deployment Process
+
+#### Phase 1: Environment Setup
+
+```bash
+# 1. Install ADB tools
+# MacOS:
+brew install android-platform-tools
+# Or download manually: https://developer.android.com/tools/releases/platform-tools
+
+# Windows: Download, extract, and add to PATH environment variable
+
+# 2. Verify ADB installation
+adb version
+# Should output version information
+
+# 3. Connect phone and verify
+# Connect phone via USB cable, tap "Allow USB debugging" on phone
+adb devices
+# Should output device list, e.g.:
+# List of devices attached
+# XXXXXXXX    device
+```
+
+**If `adb devices` shows empty list or unauthorized:**
+1. Check if authorization popup appeared on phone, tap "Allow"
+2. Check if USB debugging is enabled
+3. Try a different cable or USB port
+4. Run `adb kill-server && adb start-server` and retry
+
+#### Phase 2: Install Agent
+
+```bash
+# 1. Clone repository (if not already cloned)
+git clone https://github.com/zai-org/Open-AutoGLM.git
+cd Open-AutoGLM
+
+# 2. Create virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+pip install -e .
+```
+
+**Note: No need to clone model repository; models are called via API.**
+
+#### Phase 3: Configure Model Service
+
+**If user chooses Option A (using already-deployed model):**
+- Use the URL provided by the user directly
+- Skip local model deployment steps
+
+**If user chooses Option B (deploy model locally):**
+
+```bash
+# 1. Install vLLM
+pip install vllm
+
+# 2. Start model service (will auto-download model, ~20GB)
+python3 -m vllm.entrypoints.openai.api_server \
+  --served-model-name autoglm-phone-9b-multilingual \
+  --allowed-local-media-path / \
+  --mm-encoder-tp-mode data \
+  --mm_processor_cache_type shm \
+  --mm_processor_kwargs "{\"max_pixels\":5000000}" \
+  --max-model-len 25480 \
+  --chat-template-content-format string \
+  --limit-mm-per-prompt "{\"image\":10}" \
+  --model zai-org/AutoGLM-Phone-9B-Multilingual \
+  --port 8000
+
+# Model service URL: http://localhost:8000/v1
+```
+
+#### Phase 4: Verify Deployment
+
+```bash
+# Execute in the Open-AutoGLM directory
+# Replace {MODEL_URL} with the actual model service address
+
+python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b-multilingual" "Open Gmail and send an email to File Transfer Assistant: Deployment successful"
+```
+
+**Expected Result:**
+- Phone automatically opens Gmail
+- Automatically searches for recipient
+- Automatically sends the message "Deployment successful"
+
+---
+
+### Troubleshooting
+
+| Error Symptom | Possible Cause | Solution |
+|---------------|----------------|----------|
+| `adb devices` shows nothing | USB debugging not enabled or cable issue | Check developer options, replace cable |
+| `adb devices` shows unauthorized | Phone not authorized | Tap "Allow USB debugging" on phone |
+| Can open apps but cannot tap | Missing security debugging permission | Enable "USB Debugging (Security Settings)" |
+| Chinese/text input corrupted or missing | ADB Keyboard not enabled | Enable ADB Keyboard in system settings |
+| Screenshot returns black screen | Sensitive page (payment/banking) | Normal behavior, system will handle automatically |
+| Cannot connect to model service | Wrong URL or service not running | Check URL, confirm service is running |
+| `ModuleNotFoundError` | Dependencies not installed | Run `pip install -r requirements.txt` |
+
+---
+
+### Deployment Key Points
+
+1. **Prioritize confirming phone connection**: Before installing any code, ensure `adb devices` can see the device
+2. **Don't skip ADB Keyboard**: Without it, text input will fail
+3. **Model service is an external dependency**: Agent code doesn't include the model; a separate model service is required
+4. **Check phone settings first for permission issues**: Most problems are due to incomplete phone-side configuration
+5. **Test with simple tasks after deployment**: Recommend using "Open Gmail and send message to File Transfer Assistant" as acceptance criteria
+
+---
+
+### Command Quick Reference
+
+```bash
+# Check ADB connection
+adb devices
+
+# Restart ADB service
+adb kill-server && adb start-server
+
+# Install dependencies
+pip install -r requirements.txt && pip install -e .
+
+# Run Agent (interactive mode)
+python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b-multilingual"
+
+# Run Agent (single task)
+python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b-multilingual" "your task description"
+
+# View supported apps list
+python main.py --list-apps
+```
+
+---
+
+**Deployment success indicator: The phone can automatically execute user's natural language instructions.**

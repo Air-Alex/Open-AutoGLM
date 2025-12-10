@@ -1,9 +1,13 @@
-# Open-AutoGLM Quick Start / 快速开始
+# Open-AutoGLM Quick Start for Coding Agent
 
 <div align="center">
 <img src=resources/logo.svg width="20%"/>
 </div>
 
+> **本文专为AI助手(如ClaudeCode)阅读,用于自动化部部署Open-AutoGLM。**
+> 
+> 如果你是人类读者, 可以跳过本文, 按照README.md文档接操作即可。
+> 
 > Quick deployment guide for Phone Agent desktop SDK
 > Phone Agent 桌面端 SDK 快速部署指南
 

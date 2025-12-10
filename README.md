@@ -573,3 +573,201 @@ adb devices
   year={2025}
 }
 ```
+
+---
+
+## 自动化部署指南（面向 AI）
+
+> **本章节专为 AI 助手（如 Claude Code）设计，用于自动化部署 Open-AutoGLM。**
+>
+> 如果你是人类读者，可以跳过本章节，按照上面的文档操作即可。
+
+---
+
+### 项目概述
+
+Open-AutoGLM 是一个手机 Agent 框架：
+- **输入**：用户的自然语言指令（如"打开微信发消息给张三"）
+- **输出**：自动操作用户的安卓手机完成任务
+- **原理**：截图 → 视觉模型理解界面 → 输出点击坐标 → ADB 执行操作 → 循环
+
+架构分为两部分：
+1. **Agent 代码**（本仓库）：运行在用户电脑上，负责调用模型、解析动作、控制手机
+2. **视觉模型服务**：可以是远程 API，也可以本地部署
+
+---
+
+### 部署前置检查
+
+在开始部署前，请逐项向用户确认以下内容：
+
+#### 硬件环境
+- [ ] 用户有一台安卓手机（Android 7.0+）
+- [ ] 用户有一根支持数据传输的 USB 数据线（不是仅充电线）
+- [ ] 手机和电脑可以通过数据线连接
+
+#### 手机端配置
+- [ ] 手机已开启「开发者模式」（设置 → 关于手机 → 连续点击版本号 7 次）
+- [ ] 手机已开启「USB 调试」（设置 → 开发者选项 → USB 调试）
+- [ ] 部分机型需要同时开启「USB 调试（安全设置）」
+- [ ] 手机已安装 ADB Keyboard 应用（下载地址：https://github.com/senzhk/ADBKeyBoard/blob/master/ADBKeyboard.apk）
+- [ ] ADB Keyboard 已在系统设置中启用（设置 → 语言和输入法 → 启用 ADB Keyboard）
+
+#### 模型服务确认（二选一）
+
+**请明确询问用户：你是否已有可用的 AutoGLM 模型服务？**
+
+- **选项 A：使用已部署的模型服务（推荐）**
+  - 用户提供模型服务的 URL（如 `http://xxx.xxx.xxx.xxx:8000/v1`）
+  - 无需本地 GPU，无需下载模型
+  - 直接使用该 URL 作为 `--base-url` 参数
+
+- **选项 B：本地部署模型（高配置要求）**
+  - 需要 NVIDIA GPU（建议 24GB+ 显存）
+  - 需要安装 vLLM 或 SGLang
+  - 需要下载约 20GB 的模型文件
+  - **如果用户是新手或不确定，强烈建议选择选项 A**
+
+---
+
+### 部署流程
+
+#### 阶段一：环境准备
+
+```bash
+# 1. 安装 ADB 工具
+# MacOS:
+brew install android-platform-tools
+# 或手动下载：https://developer.android.com/tools/releases/platform-tools
+
+# Windows: 下载后解压，添加到 PATH 环境变量
+
+# 2. 验证 ADB 安装
+adb version
+# 应输出版本信息
+
+# 3. 连接手机并验证
+# 用数据线连接手机，手机上点击「允许 USB 调试」
+adb devices
+# 应输出设备列表，如：
+# List of devices attached
+# XXXXXXXX    device
+```
+
+**如果 `adb devices` 显示空列表或 unauthorized：**
+1. 检查手机上是否弹出授权框，点击「允许」
+2. 检查 USB 调试是否开启
+3. 尝试更换数据线或 USB 接口
+4. 执行 `adb kill-server && adb start-server` 后重试
+
+#### 阶段二：安装 Agent
+
+```bash
+# 1. 克隆仓库（如果还没有克隆）
+git clone https://github.com/zai-org/Open-AutoGLM.git
+cd Open-AutoGLM
+
+# 2. 创建虚拟环境（推荐）
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 3. 安装依赖
+pip install -r requirements.txt
+pip install -e .
+```
+
+**注意：不需要 clone 模型仓库，模型通过 API 调用。**
+
+#### 阶段三：配置模型服务
+
+**如果用户选择选项 A（使用已部署的模型）：**
+- 直接使用用户提供的 URL
+- 跳过本地模型部署步骤
+
+**如果用户选择选项 B（本地部署模型）：**
+
+```bash
+# 1. 安装 vLLM
+pip install vllm
+
+# 2. 启动模型服务（会自动下载模型，约 20GB）
+python3 -m vllm.entrypoints.openai.api_server \
+  --served-model-name autoglm-phone-9b \
+  --allowed-local-media-path / \
+  --mm-encoder-tp-mode data \
+  --mm_processor_cache_type shm \
+  --mm_processor_kwargs "{\"max_pixels\":5000000}" \
+  --max-model-len 25480 \
+  --chat-template-content-format string \
+  --limit-mm-per-prompt "{\"image\":10}" \
+  --model zai-org/AutoGLM-Phone-9B \
+  --port 8000
+
+# 模型服务 URL 为：http://localhost:8000/v1
+```
+
+#### 阶段四：验证部署
+
+```bash
+# 在 Open-AutoGLM 目录下执行
+# 将 {MODEL_URL} 替换为实际的模型服务地址
+
+python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b" "打开微信，对文件传输助手发送消息：部署成功"
+```
+
+**预期结果：**
+- 手机自动打开微信
+- 自动搜索「文件传输助手」
+- 自动发送消息「部署成功」
+
+---
+
+### 异常处理
+
+| 错误现象 | 可能原因 | 解决方案 |
+|---------|---------|---------|
+| `adb devices` 无输出 | USB 调试未开启或数据线问题 | 检查开发者选项，更换数据线 |
+| `adb devices` 显示 unauthorized | 手机未授权 | 手机上点击「允许 USB 调试」|
+| 能打开应用但无法点击 | 缺少安全调试权限 | 开启「USB 调试（安全设置）」|
+| 中文输入变成乱码或无输入 | ADB Keyboard 未启用 | 在系统设置中启用 ADB Keyboard |
+| 截图返回黑屏 | 敏感页面（支付/银行） | 正常现象，系统会自动处理 |
+| 连接模型服务失败 | URL 错误或服务未启动 | 检查 URL，确认服务正在运行 |
+| `ModuleNotFoundError` | 依赖未安装 | 执行 `pip install -r requirements.txt` |
+
+---
+
+### 部署要点
+
+1. **优先确认手机连接**：在安装任何代码之前，先确保 `adb devices` 能看到设备
+2. **不要跳过 ADB Keyboard**：没有它，中文输入会失败
+3. **模型服务是外部依赖**：Agent 代码本身不包含模型，需要单独的模型服务
+4. **遇到权限问题先检查手机设置**：大部分问题都是手机端配置不完整
+5. **部署完成后用简单任务测试**：建议用「打开微信发消息给文件传输助手」作为验收标准
+
+---
+
+### 命令速查
+
+```bash
+# 检查 ADB 连接
+adb devices
+
+# 重启 ADB 服务
+adb kill-server && adb start-server
+
+# 安装依赖
+pip install -r requirements.txt && pip install -e .
+
+# 运行 Agent（交互模式）
+python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b"
+
+# 运行 Agent（单次任务）
+python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b" "你的任务描述"
+
+# 查看支持的应用列表
+python main.py --list-apps
+```
+
+---
+
+**部署完成的标志：手机能自动执行用户的自然语言指令。**
